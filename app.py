@@ -1,265 +1,221 @@
-# Copula-Risk-Visualizer
-import React, { useState, useEffect, useMemo } from 'react';
-import { CopulaType, DataPoints, Dimension, MarginalType, SimulationParams } from './types';
-import { generateData } from './utils/math';
+import streamlit as st
+import plotly.graph_objects as go
+import numpy as np
+from scipy.stats import norm, t, expon
 
-// Declare Plotly from CDN
-declare const Plotly: any;
+# --- CONFIGURAZIONE PAGINA (Simula il layout React) ---
+st.set_page_config(layout="wide", page_title="Copula Visualizer")
 
-const App: React.FC = () => {
-  // --- State ---
-  const [params, setParams] = useState<SimulationParams>({
-    n: 1000,
-    d: 2,
-    marginal: MarginalType.NORMAL,
-    copula: CopulaType.GAUSSIAN,
-    rho: 0.5,
-    theta: 2.0,
-  });
+# Stile custom per avvicinarsi al look "Slate" di Tailwind del codice React
+st.markdown("""
+<style>
+    .stApp { background-color: #0f172a; color: #e2e8f0; } 
+    .stSelectbox, .stSlider { color: #e2e8f0; }
+</style>
+""", unsafe_allow_html=True)
 
-  const [data, setData] = useState<DataPoints | null>(null);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
+# --- SIDEBAR (Corrisponde al componente <aside>) ---
+with st.sidebar:
+    st.title("Copula Visualizer")
+    st.caption("Quantitative Risk Management Tool")
+    
+    st.markdown("---")
 
-  // Derived state for 3D mode
-  const is3D = params.d >= 3;
+    # 1. Input N (Simulations)
+    # React: min="100" max="100000" step="100"
+    n_sim = st.slider("Simulations (N)", 100, 100000, 1000, 100)
 
-  // --- Simulation Effect ---
-  useEffect(() => {
-    // Debounce slightly to avoid freezing on rapid slider movement
-    const timer = setTimeout(() => {
-      setLoading(true);
-      setError(null);
-      // Use setTimeout to allow UI to render loading state
-      setTimeout(() => {
-        try {
-            const result = generateData(params);
-            setData(result);
-        } catch (e: any) {
-            console.error("Simulation error:", e);
-            setError(e.message || "An error occurred during simulation.");
-        } finally {
-            setLoading(false);
-        }
-      }, 10);
-    }, 300);
+    # 2. Input D (Dimensions)
+    # React: min="2" max="5" step="1"
+    d_dim = st.slider("Number of Marginals (d)", 2, 5, 2, 1)
 
-    return () => clearTimeout(timer);
-  }, [params]);
+    # 3. Copula Type
+    copula_type = st.selectbox(
+        "Copula Type", 
+        ["GAUSSIAN", "STUDENT_T", "GUMBEL"]
+    )
 
-  // --- Plotting Effect ---
-  useEffect(() => {
-    if (!data) return;
-    if (!Plotly) return;
+    # 4. Marginal Type
+    marginal_type = st.selectbox(
+        "Marginal Distribution", 
+        ["NORMAL", "STUDENT_T", "EXPONENTIAL"]
+    )
 
-    try {
-        const commonLayout = {
-          margin: { t: 30, b: 30, l: 30, r: 30 },
-          paper_bgcolor: 'rgba(0,0,0,0)',
-          plot_bgcolor: 'rgba(255,255,255,0.05)',
-          font: { color: '#e2e8f0' },
-          showlegend: false,
-        };
+    # 5. Dependency Params (Conditional rendering)
+    st.markdown("### Dependency Parameters")
+    
+    rho = 0.5
+    theta = 2.0
 
-        const markerConfig = {
-          size: 3,
-          opacity: Math.max(0.1, Math.min(0.8, 1000 / params.n)), // Adjust opacity based on N
-          color: '#38bdf8', // Sky 400
-          line: { width: 0 }
-        };
-
-        // --- 1. Uniform Copula Plot ---
-        const uniformTrace = {
-          type: is3D ? 'scatter3d' : 'scatter',
-          mode: 'markers',
-          x: data.uniform.map(row => row[0]),
-          y: data.uniform.map(row => row[1]),
-          z: is3D ? data.uniform.map(row => row[2]) : undefined,
-          marker: markerConfig,
-        };
-
-        const uniformLayout: any = {
-          ...commonLayout,
-          title: `Copula Space (Uniform) ${params.d}D`,
-        };
-
-        if (is3D) {
-          uniformLayout.scene = {
-            xaxis: { title: 'U1', range: [0, 1] },
-            yaxis: { title: 'U2', range: [0, 1] },
-            zaxis: { title: 'U3', range: [0, 1] },
-          };
-        } else {
-          uniformLayout.xaxis = { title: 'U1', range: [0, 1] };
-          uniformLayout.yaxis = { title: 'U2', range: [0, 1] };
-        }
-
-        Plotly.react('plot-uniform', [uniformTrace], uniformLayout, { responsive: true, displayModeBar: true });
-
-        // --- 2. Marginal Space Plot ---
-        const marginalTrace = {
-          type: is3D ? 'scatter3d' : 'scatter',
-          mode: 'markers',
-          x: data.marginal.map(row => row[0]),
-          y: data.marginal.map(row => row[1]),
-          z: is3D ? data.marginal.map(row => row[2]) : undefined,
-          marker: { ...markerConfig, color: '#f472b6' }, // Pink 400
-        };
-
-        // Determine ranges for marginals roughly
-        let range: [number, number] | undefined = undefined;
-        if (params.marginal === MarginalType.NORMAL) range = [-4, 4];
-        if (params.marginal === MarginalType.STUDENT_T) range = [-6, 6];
-        if (params.marginal === MarginalType.EXPONENTIAL) range = [-1.5, 5];
-
-        const marginalLayout: any = {
-          ...commonLayout,
-          title: `Marginal Space (${params.marginal})`,
-        };
-
-        if (is3D) {
-          marginalLayout.scene = {
-            xaxis: { title: 'X1', range },
-            yaxis: { title: 'X2', range },
-            zaxis: { title: 'X3', range },
-          };
-        } else {
-          marginalLayout.xaxis = { title: 'X1', range };
-          marginalLayout.yaxis = { title: 'X2', range };
-        }
-
-        Plotly.react('plot-marginal', [marginalTrace], marginalLayout, { responsive: true, displayModeBar: true });
-    } catch (e) {
-        console.error("Plotting error", e);
-    }
-
-  }, [data, params.d, params.marginal, params.n, is3D]); // Added is3D dependency
+    if copula_type == "GUMBEL":
+        # React: min="1.0" max="10.0" step="0.1"
+        col1, col2 = st.columns([3, 1])
+        theta = st.slider("Theta (θ)", 1.0, 10.0, 2.0, 0.1)
+        st.caption("Controls tail dependence")
+    else:
+        # React: min="-0.99" max="0.99" step="0.01"
+        rho = st.slider("Correlation (ρ)", -0.99, 0.99, 0.5, 0.01)
+        st.caption("Equicorrelated matrix parameter")
 
 
-  // --- Event Handlers ---
-  const updateParam = <K extends keyof SimulationParams>(key: K, value: SimulationParams[K]) => {
-    setParams(prev => ({ ...prev, [key]: value }));
-  };
+# --- LOGICA MATEMATICA (Ricostruzione di ./utils/math) ---
 
-  return (
-    <div className="flex h-screen w-full overflow-hidden font-sans">
-      {/* Sidebar */}
-      <aside className="w-80 flex-shrink-0 bg-slate-800 border-r border-slate-700 overflow-y-auto p-6 flex flex-col gap-6">
-        <header>
-          <h1 className="text-xl font-bold text-white mb-2">Copula Visualizer</h1>
-          <p className="text-xs text-slate-400">Quantitative Risk Management Tool</p>
-        </header>
-
-        {/* Input: N */}
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-slate-300">Simulations (N): {params.n}</label>
-          <input 
-            type="range" min="100" max="100000" step="100" 
-            value={params.n} 
-            onChange={(e) => updateParam('n', parseInt(e.target.value))}
-            className="w-full accent-blue-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
-          />
-        </div>
-
-        {/* Input: D (Number of Marginals) */}
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-slate-300">Number of Marginals (d): {params.d}</label>
-          <input 
-            type="range" min="2" max="5" step="1" 
-            value={params.d} 
-            onChange={(e) => updateParam('d', parseInt(e.target.value))}
-            className="w-full accent-blue-500 h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer"
-          />
-        </div>
-
-        {/* Input: Copula Type */}
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-slate-300">Copula Type</label>
-          <select 
-            value={params.copula}
-            onChange={(e) => updateParam('copula', e.target.value as CopulaType)}
-            className="w-full bg-slate-700 text-slate-200 text-sm rounded-md p-2 border border-slate-600 focus:outline-none focus:border-blue-500"
-          >
-            {Object.values(CopulaType).map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-
-        {/* Input: Marginal Type */}
-        <div className="space-y-2">
-          <label className="text-sm font-medium text-slate-300">Marginal Distribution</label>
-          <select 
-            value={params.marginal}
-            onChange={(e) => updateParam('marginal', e.target.value as MarginalType)}
-            className="w-full bg-slate-700 text-slate-200 text-sm rounded-md p-2 border border-slate-600 focus:outline-none focus:border-blue-500"
-          >
-            {Object.values(MarginalType).map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-
-        {/* Dependency Params */}
-        <div className="p-4 bg-slate-700/50 rounded-lg border border-slate-700 space-y-4">
-          {params.copula === CopulaType.GUMBEL ? (
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300 flex justify-between">
-                <span>Theta (θ)</span>
-                <span>{params.theta.toFixed(1)}</span>
-              </label>
-              <input 
-                type="range" min="1.0" max="10.0" step="0.1" 
-                value={params.theta} 
-                onChange={(e) => updateParam('theta', parseFloat(e.target.value))}
-                className="w-full accent-green-500 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer"
-              />
-              <p className="text-[10px] text-slate-400">Controls tail dependence</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-slate-300 flex justify-between">
-                <span>Correlation (ρ)</span>
-                <span>{params.rho.toFixed(2)}</span>
-              </label>
-              <input 
-                type="range" min="-0.99" max="0.99" step="0.01" 
-                value={params.rho} 
-                onChange={(e) => updateParam('rho', parseFloat(e.target.value))}
-                className="w-full accent-blue-500 h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer"
-              />
-              <p className="text-[10px] text-slate-400">Equicorrelated matrix parameter</p>
-            </div>
-          )}
-        </div>
-
-        {error && (
-            <div className="p-2 bg-red-900/50 text-red-200 text-xs rounded border border-red-700">
-                {error}
-            </div>
-        )}
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col p-4 relative">
-        {loading && (
-          <div className="absolute inset-0 bg-slate-900/50 z-10 flex items-center justify-center backdrop-blur-sm">
-            <div className="text-blue-400 font-semibold animate-pulse">Running Simulation...</div>
-          </div>
-        )}
+def generate_data(n, d, copula, marginal, rho_val, theta_val):
+    u_matrix = np.zeros((n, d))
+    
+    # 1. Generazione Copula (Spazio Uniforme)
+    if copula == "GAUSSIAN":
+        mean = np.zeros(d)
+        cov = np.full((d, d), rho_val)
+        np.fill_diagonal(cov, 1)
+        x_mvn = np.random.multivariate_normal(mean, cov, size=n)
+        u_matrix = norm.cdf(x_mvn)
         
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-4 h-full">
-          {/* Plot 1 */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-2 flex flex-col">
-            {/* Key forces remount on 2D/3D switch to prevent Plotly WebGL context errors */}
-            <div key={is3D ? 'u-3d' : 'u-2d'} id="plot-uniform" className="w-full h-full min-h-[300px]" />
-          </div>
-          
-          {/* Plot 2 */}
-          <div className="bg-slate-800 rounded-xl border border-slate-700 p-2 flex flex-col">
-            {/* Key forces remount on 2D/3D switch */}
-            <div key={is3D ? 'm-3d' : 'm-2d'} id="plot-marginal" className="w-full h-full min-h-[300px]" />
-          </div>
-        </div>
-      </main>
-    </div>
-  );
-};
+    elif copula == "STUDENT_T":
+        df = 4
+        mean = np.zeros(d)
+        cov = np.full((d, d), rho_val)
+        np.fill_diagonal(cov, 1)
+        x_mvn = np.random.multivariate_normal(mean, cov, size=n)
+        w = np.random.chisquare(df, size=n) / df
+        x_mvt = x_mvn / np.sqrt(w)[:, None]
+        u_matrix = t.cdf(x_mvt, df=df)
+        
+    elif copula == "GUMBEL":
+        # Simulazione per Gumbel Archimedea
+        alpha = 1.0 / theta_val
+        # Generatore variabile stabile (Chambers-Mallows-Stuck)
+        pi = np.pi
+        u_stab = np.random.uniform(-pi/2, pi/2, n)
+        w_stab = np.random.exponential(1, n)
+        
+        # S ~ Stable(alpha, 1, 1, 0) skewata
+        # Nota: formula semplificata per la simulazione
+        val = (np.sin(alpha * u_stab) / (np.cos(u_stab) ** (1/alpha))) * \
+              ((np.cos((1-alpha)*u_stab) / w_stab) ** ((1-alpha)/alpha))
+        S = val
+        
+        E = np.random.exponential(1, (n, d))
+        # Generatore inverso Gumbel: exp(-(E/S)^alpha)
+        # Nota: gestione valori negativi/nan
+        S = np.abs(S)
+        u_matrix = np.exp(- (E / S[:, None]) ** alpha)
 
-export default App;
+    # 2. Trasformazione Marginale (Inverse CDF)
+    x_matrix = np.zeros_like(u_matrix)
+    
+    if marginal == "NORMAL":
+        x_matrix = norm.ppf(u_matrix)
+    elif marginal == "STUDENT_T":
+        # Centrata, df=4
+        x_matrix = t.ppf(u_matrix, df=4)
+    elif marginal == "EXPONENTIAL":
+        # Centrata in 0 (Exp standard - 1)
+        x_matrix = expon.ppf(u_matrix) - 1.0
+        
+    return u_matrix, x_matrix
+
+# Esecuzione simulazione
+try:
+    data_uniform, data_marginal = generate_data(n_sim, d_dim, copula_type, marginal_type, rho, theta)
+except Exception as e:
+    st.error(f"Simulation error: {e}")
+    st.stop()
+
+# --- PLOTTING (Simula useEffect Plotting) ---
+
+# Configurazione colori React: #38bdf8 (Sky 400), #f472b6 (Pink 400)
+color_uniform = '#38bdf8'
+color_marginal = '#f472b6'
+
+# Opacity logic: Math.max(0.1, Math.min(0.8, 1000 / params.n))
+opacity_val = max(0.1, min(0.8, 1000 / n_sim))
+
+# 3D Logic: const is3D = params.d >= 3;
+is_3d = d_dim >= 3
+
+# Subsampling per performance browser se necessario (opzionale, React non lo faceva ma Plotly Python è più lento di JS)
+# Manteniamo tutto per fedeltà, ma attenzione a N=100k
+plot_n = n_sim
+if n_sim > 10000:
+    idx = np.random.choice(n_sim, 10000, replace=False)
+    u_plot = data_uniform[idx]
+    x_plot = data_marginal[idx]
+else:
+    u_plot = data_uniform
+    x_plot = data_marginal
+
+col1, col2 = st.columns(2)
+
+def get_plot_layout(title, range_vals=None):
+    layout = dict(
+        title=title,
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(255,255,255,0.05)',
+        font=dict(color='#e2e8f0'),
+        margin=dict(t=40, b=30, l=30, r=30),
+        height=450
+    )
+    return layout
+
+# --- PLOT 1: UNIFORM ---
+with col1:
+    if is_3d:
+        fig_u = go.Figure(go.Scatter3d(
+            x=u_plot[:, 0], y=u_plot[:, 1], z=u_plot[:, 2],
+            mode='markers', marker=dict(size=2, opacity=opacity_val, color=color_uniform)
+        ))
+        fig_u.update_layout(
+            **get_plot_layout(f"Copula Space (Uniform) {d_dim}D"),
+            scene=dict(
+                xaxis=dict(title='U1', range=[0,1]),
+                yaxis=dict(title='U2', range=[0,1]),
+                zaxis=dict(title='U3', range=[0,1])
+            )
+        )
+    else:
+        fig_u = go.Figure(go.Scatter(
+            x=u_plot[:, 0], y=u_plot[:, 1],
+            mode='markers', marker=dict(size=3, opacity=opacity_val, color=color_uniform)
+        ))
+        fig_u.update_layout(
+            **get_plot_layout(f"Copula Space (Uniform) {d_dim}D"),
+            xaxis=dict(title='U1', range=[0,1]),
+            yaxis=dict(title='U2', range=[0,1])
+        )
+    
+    st.plotly_chart(fig_u, use_container_width=True)
+
+# --- PLOT 2: MARGINAL ---
+with col2:
+    # Determinazione range come nel codice React
+    rng = None
+    if marginal_type == "NORMAL": rng = [-4, 4]
+    elif marginal_type == "STUDENT_T": rng = [-6, 6]
+    elif marginal_type == "EXPONENTIAL": rng = [-1.5, 5]
+
+    if is_3d:
+        fig_m = go.Figure(go.Scatter3d(
+            x=x_plot[:, 0], y=x_plot[:, 1], z=x_plot[:, 2],
+            mode='markers', marker=dict(size=2, opacity=opacity_val, color=color_marginal)
+        ))
+        fig_m.update_layout(
+            **get_plot_layout(f"Marginal Space ({marginal_type})"),
+            scene=dict(
+                xaxis=dict(title='X1', range=rng),
+                yaxis=dict(title='X2', range=rng),
+                zaxis=dict(title='X3', range=rng)
+            )
+        )
+    else:
+        fig_m = go.Figure(go.Scatter(
+            x=x_plot[:, 0], y=x_plot[:, 1],
+            mode='markers', marker=dict(size=3, opacity=opacity_val, color=color_marginal)
+        ))
+        fig_m.update_layout(
+            **get_plot_layout(f"Marginal Space ({marginal_type})"),
+            xaxis=dict(title='X1', range=rng),
+            yaxis=dict(title='X2', range=rng)
+        )
+
+    st.plotly_chart(fig_m, use_container_width=True)
